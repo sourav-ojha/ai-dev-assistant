@@ -200,13 +200,19 @@ export class TelegramAdapter implements INotificationChannel {
     );
   }
 
-  async sendCompletion(task: Task, totalTokens: number, totalSteps: number): Promise<void> {
-    const msg = truncate(
-      `✅ TASK COMPLETED\n\nTask: ${task.id}\nGoal: ${task.goal}\nBranch: ${task.featureBranch}\nSteps: ${totalSteps}\nTotal tokens: ${totalTokens}\n\nCode not pushed/PR yet. See docs/LOG_ANALYSIS_AND_GAPS.md.`,
-    );
+  async sendCompletion(task: Task, totalTokens: number, totalSteps: number, prUrl?: string, message?: string): Promise<void> {
+    let msg = `✅ TASK COMPLETED\n\nTask: ${task.id}\nGoal: ${task.goal}\nBranch: ${task.featureBranch}\nSteps: ${totalSteps}\nTotal tokens: ${totalTokens}`;
 
-    await this.bot.telegram.sendMessage(this.chatId, msg);
-    log.info({ taskId: task.id }, 'Completion sent');
+    if (prUrl) {
+      msg += `\n\n🔗 PR: ${prUrl}`;
+    }
+
+    if (message) {
+      msg += `\n\nℹ️ Note: ${message}`;
+    }
+
+    await this.bot.telegram.sendMessage(this.chatId, truncate(msg));
+    log.info({ taskId: task.id, prUrl }, 'Completion sent');
   }
 
   waitForDecision(taskId: string): Promise<ApprovalDecision> {

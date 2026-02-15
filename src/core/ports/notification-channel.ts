@@ -56,7 +56,7 @@ export interface INotificationChannel {
   sendStatus(task: Task, message: string): Promise<void>;
 
   /** Send task completion summary. */
-  sendCompletion(task: Task, totalTokens: number, totalSteps: number): Promise<void>;
+  sendCompletion(task: Task, totalTokens: number, totalSteps: number, prUrl?: string, message?: string): Promise<void>;
 
   /**
    * Wait for a user decision on a specific task.

@@ -27,7 +27,15 @@ import type { ILLMAdapter } from '../core/ports/llm-adapter.js';
 import type { ITaskStore } from '../core/ports/task-store.js';
 import type { INotificationChannel, ApprovalDecision } from '../core/ports/notification-channel.js';
 import type { ISandboxRunner, SandboxConfig } from '../core/ports/sandbox-runner.js';
-import { getRepoStructure, createBranchName, readFiles } from '../infrastructure/git/git-adapter.js';
+import {
+  getRepoStructure,
+  createBranchName,
+  readFiles,
+  commitChanges,
+  pushBranch,
+  createPullRequest,
+  GhCliNotConfiguredError,
+} from '../infrastructure/git/git-adapter.js';
 import type { AppConfig } from '../config/index.js';
 import { createLogger } from '../infrastructure/logger.js';
 
@@ -171,6 +179,22 @@ export class TaskOrchestrator {
         totalSteps: plan.steps.length,
       };
 
+      // Create local branch (but don't push yet)
+      const repoPath = this.getRepoDir(task.id);
+      // We don't need to call checkoutNewBranch here explicitly if we want to do it later,
+      // but git-adapter.ts has checkoutNewBranch. Let's use it or rely on ensureRepoCloned?
+      // ensureRepoCloned only clones. We should checkout the branch here.
+      // The original code calculated featureBranch but didn't checkout.
+      // Let's assume processState should handle it or it's handled in ensureRepoCloned logic (it wasn't).
+      // Let's add it here to be safe and consistent with "feature branch" concept.
+      // But wait, if we are in PLANNING, we haven't executed anything.
+      // It's better to create the branch when we start execution or right here.
+      // Let's do it here so the Plan structure has it.
+      
+      // Import checkoutNewBranch is missing in imports above, need to add it or use execSync directly.
+      // Actually, let's just use the existing helper from imports if available or add it.
+      // checkoutNewBranch was exported in git-adapter.ts
+      
       return this.doTransition(task, TaskState.AWAITING_PLAN_APPROVAL, 'Plan generated');
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
@@ -189,6 +213,13 @@ export class TaskOrchestrator {
 
     switch (decision.type) {
       case 'approve':
+        // Now valid to checkout the branch since we are proceeding
+        // eslint-disable-next-line no-case-declarations
+        const repoDir = this.getRepoDir(task.id);
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { checkoutNewBranch } = await import('../infrastructure/git/git-adapter.js');
+        checkoutNewBranch(repoDir, task.featureBranch!);
+        
         return this.doTransition(task, TaskState.EXECUTING_STEP, 'Plan approved');
       case 'reject':
         return this.doTransition(task, TaskState.REJECTED, 'Plan rejected by user');
@@ -270,6 +301,10 @@ export class TaskOrchestrator {
         return this.doTransition(task, TaskState.STEP_FAILED, 'Tests failed');
       }
 
+      // === GIT COMMIT (Success) ===
+      const commitMsg = this.formatCommitMessage(step.title);
+      commitChanges(repoDir, commitMsg);
+
       // Send results to Telegram
       const { totalTokensIn, totalTokensOut } = task.tokenUsage;
       const totalUsed = totalTokensIn + totalTokensOut;
@@ -300,8 +335,8 @@ export class TaskOrchestrator {
         task = { ...task, currentStepIndex: nextIndex };
 
         if (nextIndex >= task.totalSteps) {
-          const { totalTokensIn, totalTokensOut } = task.tokenUsage;
-          await this.notify.sendCompletion(task, totalTokensIn + totalTokensOut, task.totalSteps);
+          // Task Completed - Push and PR
+          await this.completeTaskWithGit(task);
           return this.doTransition(task, TaskState.COMPLETED, 'All steps approved and completed');
         }
 
@@ -312,6 +347,45 @@ export class TaskOrchestrator {
       default:
         return this.doTransition(task, TaskState.ABORTED, `Unexpected decision: ${decision.type}`);
     }
+  }
+
+  // === Git Completion Helper ===
+  private async completeTaskWithGit(task: Task): Promise<void> {
+    const repoDir = this.getRepoDir(task.id);
+    const { totalTokensIn, totalTokensOut } = task.tokenUsage;
+
+    try {
+      pushBranch(repoDir, task.featureBranch!);
+      
+      const prBody = `Task: ${task.goal}\n\nAutomated by AI Dev Assistant.\n\nTokens used: ${totalTokensIn + totalTokensOut}`;
+      const prUrl = createPullRequest(repoDir, `feat: ${task.goal}`, prBody);
+      
+      await this.notify.sendCompletion(task, totalTokensIn + totalTokensOut, task.totalSteps, prUrl);
+    } catch (error) {
+       // Check for specific GH CLI error to give friendly guidance
+       if (error instanceof GhCliNotConfiguredError) {
+         log.warn({ taskId: task.id, error }, 'GitHub CLI not configured, skipping PR creation');
+         // Notify user about partial success (branch pushed but no PR)
+         await this.notify.sendCompletion(task, totalTokensIn + totalTokensOut, task.totalSteps, undefined, 
+           'GitHub CLI is not installed or authenticated. Branch was pushed, but PR execution failed.');
+       } else {
+         throw error;
+       }
+    }
+  }
+
+  private formatCommitMessage(stepTitle: string): string {
+    // 1. Lowercase
+    // 2. Remove period at end
+    // 3. Truncate to 90 chars (to be safe under 95)
+    let msg = stepTitle.trim().toLowerCase();
+    if (msg.endsWith('.')) {
+      msg = msg.slice(0, -1);
+    }
+    if (msg.length > 90) {
+      msg = msg.slice(0, 87) + '...';
+    }
+    return msg;
   }
 
   private async handleFailureGuidance(task: Task): Promise<Task> {
@@ -372,6 +446,8 @@ export class TaskOrchestrator {
         task = { ...task, currentStepIndex: nextIndex, failureReason: null };
 
         if (nextIndex >= task.totalSteps) {
+          // Also complete task if skipping last step
+          await this.completeTaskWithGit(task);
           return this.doTransition(task, TaskState.COMPLETED, 'Last step skipped, task complete');
         }
         return this.doTransition(task, TaskState.EXECUTING_STEP, `Skipping to step ${nextIndex}`);
@@ -414,6 +490,12 @@ export class TaskOrchestrator {
         step.status = StepStatus.COMPLETED;
         step.tokensUsed = summaryResult.tokensOut;
         this.store.savePlan(plan);
+
+        // === GIT COMMIT (Success - Scope Allowed) ===
+        const repoDir = this.getRepoDir(task.id);
+        const commitMsg = this.formatCommitMessage(step.title);
+        commitChanges(repoDir, commitMsg);
+
 
         const { totalTokensIn, totalTokensOut } = task.tokenUsage;
         const totalUsed = totalTokensIn + totalTokensOut;
