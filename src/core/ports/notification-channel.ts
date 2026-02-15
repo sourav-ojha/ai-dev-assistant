@@ -13,7 +13,9 @@ export type ApprovalDecision =
   | { type: 'retry' }
   | { type: 'skip' }
   | { type: 'fix' }
-  | { type: 'modify'; feedback: string };
+  | { type: 'modify'; feedback: string }
+  | { type: 'allow_scope' }
+  | { type: 'revise_scope' };
 
 export interface StepResultPayload {
   step: PlanStep;
@@ -34,6 +36,15 @@ export interface INotificationChannel {
 
   /** Send a failure report. */
   sendFailureReport(task: Task, reason: string, stepIndex?: number): Promise<void>;
+
+  /** Ask user whether to allow file-scope violation and proceed, or revise the plan. */
+  sendScopeViolationForApproval(
+    task: Task,
+    reason: string,
+    allowedFiles: string[],
+    modifiedFiles: string[],
+    stepIndex: number,
+  ): Promise<void>;
 
   /** Send a generic status message. */
   sendStatus(task: Task, message: string): Promise<void>;

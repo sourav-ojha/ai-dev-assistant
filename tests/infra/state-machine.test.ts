@@ -41,6 +41,16 @@ describe('State Machine — Transition Validation', () => {
     expect(isValidTransition(TaskState.EXECUTING_STEP, TaskState.STEP_FAILED)).toBe(true);
   });
 
+  it('should allow EXECUTING_STEP → AWAITING_SCOPE_APPROVAL', () => {
+    expect(isValidTransition(TaskState.EXECUTING_STEP, TaskState.AWAITING_SCOPE_APPROVAL)).toBe(true);
+  });
+
+  it('should allow AWAITING_SCOPE_APPROVAL → CHECKPOINT, EXECUTING_STEP, ABORTED', () => {
+    expect(isValidTransition(TaskState.AWAITING_SCOPE_APPROVAL, TaskState.CHECKPOINT)).toBe(true);
+    expect(isValidTransition(TaskState.AWAITING_SCOPE_APPROVAL, TaskState.EXECUTING_STEP)).toBe(true);
+    expect(isValidTransition(TaskState.AWAITING_SCOPE_APPROVAL, TaskState.ABORTED)).toBe(true);
+  });
+
   it('should allow STEP_FAILED → PAUSED_ON_FAILURE', () => {
     expect(isValidTransition(TaskState.STEP_FAILED, TaskState.PAUSED_ON_FAILURE)).toBe(true);
   });

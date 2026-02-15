@@ -123,6 +123,9 @@ export class TaskOrchestrator {
       case TaskState.AWAITING_FAILURE_GUIDANCE:
         return this.handleFailureGuidance(task);
 
+      case TaskState.AWAITING_SCOPE_APPROVAL:
+        return this.handleScopeApproval(task);
+
       default:
         throw new Error(`Unexpected state: ${task.state}`);
     }
@@ -238,8 +241,13 @@ export class TaskOrchestrator {
 
       if (violations.length > 0) {
         const violationMsg = violations.map((v) => `[${v.type}] ${v.detail}`).join('\n');
-        task = { ...task, failureReason: `File scope violation:\n${violationMsg}` };
-        return this.doTransition(task, TaskState.STEP_FAILED, 'File scope violation');
+        const allowedHint = `Only these files may be modified in this step: [${step.allowedFiles.join(', ')}].`;
+        task = { ...task, failureReason: `File scope violation:\n${violationMsg}\n${allowedHint}` };
+        // Store diff/testOutput on step so we can proceed if user allows
+        step.diff = execResult.diff;
+        step.testResults = execResult.testOutput;
+        this.store.savePlan(plan);
+        return this.doTransition(task, TaskState.AWAITING_SCOPE_APPROVAL, 'File scope violation — awaiting user allow/revise');
       }
 
       // Summarize results
@@ -365,6 +373,67 @@ export class TaskOrchestrator {
         return this.doTransition(task, TaskState.ABORTED, 'Aborted by user after failure');
       default:
         return this.doTransition(task, TaskState.ABORTED, `Unexpected decision: ${decision.type}`);
+    }
+  }
+
+  private async handleScopeApproval(task: Task): Promise<Task> {
+    const plan = this.store.getPlan(task.id);
+    if (!plan) throw new Error(`Plan not found for task: ${task.id}`);
+
+    const step = plan.steps[task.currentStepIndex];
+    if (!step || !step.diff) throw new Error(`Step or diff not found for scope approval: ${task.id}`);
+
+    const modifiedFiles = parseDiff(step.diff).map((f) => f.path);
+    await this.notify.sendScopeViolationForApproval(
+      task,
+      task.failureReason ?? 'File scope violation',
+      step.allowedFiles,
+      modifiedFiles,
+      task.currentStepIndex,
+    );
+
+    const decision = await this.notify.waitForDecision(task.id);
+
+    switch (decision.type) {
+      case 'allow_scope': {
+        // User allowed — treat step as complete: summarize, update step, send result, continue
+        const summaryResult = await this.llm.summarize(step.diff, step.testResults ?? '', step.title);
+        task = this.addTokenUsage(task, summaryResult.tokensIn, summaryResult.tokensOut);
+        this.logLLMCall(task.id, step.index, 'summarization', summaryResult.tokensIn, summaryResult.tokensOut, summaryResult.durationMs);
+
+        step.status = StepStatus.COMPLETED;
+        step.tokensUsed = summaryResult.tokensOut;
+        this.store.savePlan(plan);
+
+        const { totalTokensIn, totalTokensOut } = task.tokenUsage;
+        const totalUsed = totalTokensIn + totalTokensOut;
+        await this.notify.sendStepResult(task, {
+          step,
+          diff: step.diff,
+          testResults: step.testResults ?? '',
+          summary: summaryResult.summary,
+          tokensUsed: step.tokensUsed,
+          totalTokensUsed: totalUsed,
+          budgetRemaining: remainingBudget(totalTokensIn, totalTokensOut, this.config.tokenBudgetPerTask),
+        });
+
+        task = { ...task, failureReason: null };
+        return this.doTransition(task, TaskState.CHECKPOINT, 'User allowed scope — step accepted');
+      }
+      case 'revise_scope': {
+        // Revise: retry step with strict instruction so generator stays in scope
+        const strictPrefix = `STRICT: Only modify these files: ${step.allowedFiles.join(', ')}. Do not output any other file.\n\n`;
+        step.instruction = strictPrefix + step.instruction;
+        step.diff = null;
+        step.testResults = null;
+        this.store.savePlan(plan);
+        task = { ...task, failureReason: null };
+        return this.doTransition(task, TaskState.EXECUTING_STEP, 'Revise plan — retrying with strict scope');
+      }
+      case 'abort':
+        return this.doTransition(task, TaskState.ABORTED, 'Aborted by user after scope violation');
+      default:
+        return this.doTransition(task, TaskState.ABORTED, `Unexpected scope decision: ${decision.type}`);
     }
   }
 

@@ -26,8 +26,9 @@ export const VALID_TRANSITIONS: Readonly<Record<TaskState, ReadonlySet<TaskState
   ]),
 
   [TaskState.EXECUTING_STEP]: new Set([
-    TaskState.CHECKPOINT,        // step completed successfully
-    TaskState.STEP_FAILED,       // step execution error
+    TaskState.CHECKPOINT,              // step completed successfully
+    TaskState.STEP_FAILED,             // step execution error
+    TaskState.AWAITING_SCOPE_APPROVAL,  // file scope violation — ask user allow/revise
   ]),
 
   [TaskState.CHECKPOINT]: new Set([
@@ -50,6 +51,12 @@ export const VALID_TRANSITIONS: Readonly<Record<TaskState, ReadonlySet<TaskState
 
   [TaskState.AWAITING_FAILURE_GUIDANCE]: new Set([
     TaskState.EXECUTING_STEP,    // retry current step or skip to next
+    TaskState.ABORTED,           // user chose to abort
+  ]),
+
+  [TaskState.AWAITING_SCOPE_APPROVAL]: new Set([
+    TaskState.CHECKPOINT,        // user allowed out-of-scope changes — proceed
+    TaskState.EXECUTING_STEP,    // user chose revise — retry step with strict scope
     TaskState.ABORTED,           // user chose to abort
   ]),
 

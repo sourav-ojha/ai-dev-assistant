@@ -219,7 +219,7 @@ OUTPUT FORMAT: For each file, output the COMPLETE updated file content wrapped i
 
 RULES:
 - Output COMPLETE file contents (not diffs)
-- Only modify files listed in the allowed scope
+- You MUST output ONLY files listed in ALLOWED FILES. Do not emit --- FILE: ... --- for any path not in that list (e.g. do not modify package.json, tsconfig.json, or any other file unless it is explicitly in ALLOWED FILES).
 - Follow existing code style and conventions
 - Include all necessary imports
 - Do not add comments explaining what you changed`;
