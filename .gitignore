@@ -20,5 +20,8 @@ data/
 # Environment
 .env
 
+# Test temp files
+.test-tmp/
+
 # OS
 .DS_Store

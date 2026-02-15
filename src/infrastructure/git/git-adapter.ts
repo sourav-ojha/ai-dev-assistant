@@ -5,7 +5,7 @@
  */
 
 import { execSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createLogger } from '../logger.js';
 
@@ -33,7 +33,6 @@ export const readFiles = (
   repoPath: string,
   filePaths: string[],
 ): Array<{ path: string; content: string }> => {
-  const { readFileSync } = require('node:fs') as typeof import('node:fs');
   const results: Array<{ path: string; content: string }> = [];
 
   for (const filePath of filePaths) {

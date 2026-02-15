@@ -118,7 +118,8 @@ export class SQLiteTaskStore implements ITaskStore {
   }
 
   getTransitionLogs(taskId: string): TaskTransitionLog[] {
-    return this.db.prepare('SELECT * FROM transition_logs WHERE task_id = ? ORDER BY timestamp ASC').all(taskId) as TaskTransitionLog[];
+    const rows = this.db.prepare('SELECT * FROM transition_logs WHERE task_id = ? ORDER BY timestamp ASC').all(taskId) as TransitionLogRow[];
+    return rows.map(rowToTransitionLog);
   }
 
   logLLMCall(record: LLMCallRecord): void {
@@ -129,7 +130,8 @@ export class SQLiteTaskStore implements ITaskStore {
   }
 
   getLLMCalls(taskId: string): LLMCallRecord[] {
-    return this.db.prepare('SELECT * FROM llm_calls WHERE task_id = ? ORDER BY timestamp ASC').all(taskId) as LLMCallRecord[];
+    const rows = this.db.prepare('SELECT * FROM llm_calls WHERE task_id = ? ORDER BY timestamp ASC').all(taskId) as LLMCallRow[];
+    return rows.map(rowToLLMCall);
   }
 
   close(): void {
@@ -162,6 +164,48 @@ interface PlanRow {
   estimated_tokens: number;
   created_at: string;
 }
+
+interface TransitionLogRow {
+  id: string;
+  task_id: string;
+  from_state: string;
+  to_state: string;
+  reason: string;
+  metadata: string | null;
+  timestamp: string;
+}
+
+interface LLMCallRow {
+  task_id: string;
+  step_index: number | null;
+  call_type: string;
+  tokens_in: number;
+  tokens_out: number;
+  model: string;
+  duration_ms: number;
+  timestamp: string;
+}
+
+const rowToTransitionLog = (row: TransitionLogRow): TaskTransitionLog => ({
+  id: row.id,
+  taskId: row.task_id,
+  fromState: row.from_state as TaskState,
+  toState: row.to_state as TaskState,
+  reason: row.reason,
+  metadata: row.metadata,
+  timestamp: row.timestamp,
+});
+
+const rowToLLMCall = (row: LLMCallRow): LLMCallRecord => ({
+  taskId: row.task_id,
+  stepIndex: row.step_index,
+  callType: row.call_type as LLMCallRecord['callType'],
+  tokensIn: row.tokens_in,
+  tokensOut: row.tokens_out,
+  model: row.model,
+  durationMs: row.duration_ms,
+  timestamp: row.timestamp,
+});
 
 const rowToTask = (row: TaskRow): Task => ({
   id: row.id,
