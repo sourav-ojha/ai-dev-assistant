@@ -32,9 +32,10 @@ export interface ISandboxRunner {
    * Flow:
    * 1. Clone repo + checkout branch
    * 2. Apply generated code changes
-   * 3. Run tests
-   * 4. Collect diff + test results
-   * 5. Destroy container
+   * 3. Install dependencies (yarn/npm)
+   * 4. Run tests
+   * 5. Collect diff + test results
+   * 6. Destroy container
    */
   executeStep(
     step: PlanStep,

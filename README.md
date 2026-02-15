@@ -12,3 +12,8 @@ ollama pull qwen2.5-coder
 # Add LLM_PROVIDER=ollama to .env, then:
 yarn dev submit -g "Add README" -r https://github.com/your/repo
 ```
+
+## Docs
+
+- **[Local LLM setup](docs/LOCAL_LLM_SETUP.md)** — Run with Ollama or mock to avoid API cost.
+- **[Why "Fix it" didn't fix vitest/Yarn errors](docs/FIX_IT_AND_SANDBOX.md)** — Sandbox environment vs fix-it scope; install step and Corepack.

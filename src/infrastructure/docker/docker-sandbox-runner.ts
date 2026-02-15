@@ -56,19 +56,55 @@ export class DockerSandboxRunner implements ISandboxRunner {
       // 2. Apply code changes
       await this.applyCodeChanges(container, generatedCode);
 
-      // 3. Run tests
-      const testOutput = await this.exec(container, [
-        'sh', '-c',
-        'cd /workspace/repo && npm test 2>&1 || yarn test 2>&1 || echo "NO_TEST_RUNNER_FOUND"',
-      ]);
+      // 3. Install dependencies — detect package manager (yarn all versions, npm) then install
+      const installScript = `
+        cd /workspace/repo
+        corepack enable 2>/dev/null || true
+        if node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const pm = (pkg.packageManager || '').split('@')[0];
+          if (pm === 'yarn') { process.exit(0); } else { process.exit(1); }
+        " 2>/dev/null; then
+          yarn install 2>&1
+        elif [ -f yarn.lock ] || [ -f .yarnrc.yml ]; then
+          yarn install 2>&1
+        elif [ -f package-lock.json ]; then
+          npm ci 2>&1
+        else
+          npm install 2>&1
+        fi
+      `;
+      const installOutput = await this.exec(container, ['sh', '-c', installScript]);
+      if (installOutput.includes('ENOENT') || installOutput.includes('not found')) {
+        log.warn({ containerId, installOutput: installOutput.slice(0, 300) }, 'Install had errors; continuing to run tests');
+      }
 
-      // 4. Collect diff
+      // 4. Run tests — same package manager as install
+      const testScript = `
+        cd /workspace/repo
+        if node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const pm = (pkg.packageManager || '').split('@')[0];
+          if (pm === 'yarn') { process.exit(0); } else { process.exit(1); }
+        " 2>/dev/null; then
+          yarn test 2>&1
+        elif [ -f yarn.lock ] || [ -f .yarnrc.yml ]; then
+          yarn test 2>&1
+        else
+          npm test 2>&1
+        fi || echo "NO_TEST_RUNNER_FOUND"
+      `;
+      const testOutput = await this.exec(container, ['sh', '-c', testScript]);
+
+      // 5. Collect diff
       const diff = await this.exec(container, [
         'sh', '-c',
         'cd /workspace/repo && git add -A && git diff --cached',
       ]);
 
-      // 5. Parse results
+      // 6. Parse results
       const testsPassed = !testOutput.includes('FAIL') &&
         !testOutput.includes('Error') &&
         !testOutput.includes('NO_TEST_RUNNER_FOUND');
