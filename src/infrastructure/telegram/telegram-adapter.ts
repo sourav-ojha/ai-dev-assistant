@@ -52,8 +52,17 @@ export class TelegramAdapter implements INotificationChannel {
   }
 
   async stop(): Promise<void> {
-    this.bot.stop('SIGTERM');
-    log.info('Telegram bot stopped');
+    try {
+      this.bot.stop('SIGTERM');
+      log.info('Telegram bot stopped');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'Bot is not running!') {
+        log.debug('stop() called but bot was not running — ignoring');
+        return;
+      }
+      throw err;
+    }
   }
 
   async sendPlanForApproval(task: Task, plan: Plan): Promise<void> {

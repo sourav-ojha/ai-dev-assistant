@@ -6,6 +6,7 @@
  */
 
 import 'dotenv/config';
+import * as readline from 'node:readline';
 import { Command } from 'commander';
 import { loadConfig, loadDbPath } from '../config/index.js';
 import { SQLiteTaskStore } from '../infrastructure/persistence/sqlite-task-store.js';
@@ -13,7 +14,7 @@ import { ClaudeAdapter } from '../infrastructure/llm/claude-adapter.js';
 import { TelegramAdapter } from '../infrastructure/telegram/telegram-adapter.js';
 import { DockerSandboxRunner } from '../infrastructure/docker/docker-sandbox-runner.js';
 import { TaskOrchestrator } from '../orchestrator/task-orchestrator.js';
-import { TERMINAL_STATES } from '../core/entities/task.js';
+import { TaskState, TERMINAL_STATES } from '../core/entities/task.js';
 import { createLogger } from '../infrastructure/logger.js';
 
 const log = createLogger('cli');
@@ -136,6 +137,16 @@ program
 
 // === resume ===
 
+function askYesNo(question: string): Promise<boolean> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(/^y(es)?$/i.test(answer.trim()));
+    });
+  });
+}
+
 program
   .command('resume')
   .description('Resume a task from its current state')
@@ -143,6 +154,48 @@ program
   .action(async (taskId: string) => {
     const config = loadConfig();
     const { store, llm, notify, sandbox } = createAdapters(config);
+
+    const existingTask = store.getTask(taskId);
+    if (!existingTask) {
+      console.error(`Task not found: ${taskId}`);
+      store.close();
+      process.exit(1);
+    }
+
+    // Task already in terminal state
+    if (TERMINAL_STATES.has(existingTask.state)) {
+      if (existingTask.state === TaskState.ABORTED) {
+        const wantsResume = await askYesNo(`Task ${taskId} was aborted. Do you want to resume? (y/n): `);
+        if (!wantsResume) {
+          console.log('Exiting.');
+          store.close();
+          return;
+        }
+
+        // Restore task to the state before abort — from the last transition log
+        const logs = store.getTransitionLogs(taskId);
+        const abortLog = [...logs].reverse().find((l) => l.toState === TaskState.ABORTED);
+        if (!abortLog) {
+          console.error('Could not find transition log for aborted state.');
+          store.close();
+          process.exit(1);
+        }
+
+        const restoredTask = {
+          ...existingTask,
+          state: abortLog.fromState,
+          failureReason: abortLog.fromState === TaskState.AWAITING_FAILURE_GUIDANCE ? existingTask.failureReason : null,
+          updatedAt: new Date().toISOString(),
+        };
+        store.updateTask(restoredTask);
+        console.log(`Restored task to ${abortLog.fromState}. Starting bot...\n`);
+      } else {
+        console.log(`Task ${taskId} is already ${existingTask.state}. Nothing to resume.`);
+        store.close();
+        return;
+      }
+    }
+
     const orchestrator = new TaskOrchestrator(llm, store, notify, sandbox, config);
 
     await notify.start();
@@ -151,8 +204,8 @@ program
       const task = await orchestrator.resume(taskId);
       console.log(`\nTask ${task.id} finished with state: ${task.state}`);
     } finally {
-      await notify.stop();
-      (store as SQLiteTaskStore).close();
+      await notify.stop().catch(() => {});
+      store.close();
     }
   });
 
