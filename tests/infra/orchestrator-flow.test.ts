@@ -42,7 +42,10 @@ const TEST_DIR = join(WORKSPACE_ROOT, '.test-tmp', 'orchestrator');
 const TEST_REPO_DIR = join(TEST_DIR, 'test-repo');
 
 const createTestConfig = (dbPath: string): AppConfig => ({
+  llmProvider: 'anthropic',
   anthropicApiKey: 'test-key-not-used',
+  ollamaBaseUrl: 'http://localhost:11434',
+  ollamaModel: 'llama3.2',
   telegramBotToken: 'test-token-not-used',
   telegramChatId: 'test-chat-not-used',
   workspaceDir: join(TEST_DIR, 'workspaces'),

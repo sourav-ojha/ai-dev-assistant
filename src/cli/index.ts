@@ -11,6 +11,8 @@ import { Command } from 'commander';
 import { loadConfig, loadDbPath } from '../config/index.js';
 import { SQLiteTaskStore } from '../infrastructure/persistence/sqlite-task-store.js';
 import { ClaudeAdapter } from '../infrastructure/llm/claude-adapter.js';
+import { OllamaAdapter } from '../infrastructure/llm/ollama-adapter.js';
+import { MockLLMAdapter } from '../infrastructure/llm/mock-llm-adapter.js';
 import { TelegramAdapter } from '../infrastructure/telegram/telegram-adapter.js';
 import { DockerSandboxRunner } from '../infrastructure/docker/docker-sandbox-runner.js';
 import { TaskOrchestrator } from '../orchestrator/task-orchestrator.js';
@@ -213,12 +215,26 @@ program
 
 const createAdapters = (config: ReturnType<typeof loadConfig>) => {
   const store = new SQLiteTaskStore(config.dbPath);
-  const llm = new ClaudeAdapter(config.anthropicApiKey);
+  const llm = createLLMAdapter(config);
   const notify = new TelegramAdapter(config.telegramBotToken, config.telegramChatId);
   const sandbox = new DockerSandboxRunner(config.dockerSocket, config.sandboxImage);
 
   return { store, llm, notify, sandbox };
 };
+
+function createLLMAdapter(config: ReturnType<typeof loadConfig>) {
+  switch (config.llmProvider) {
+    case 'ollama':
+      log.info({ baseUrl: config.ollamaBaseUrl, model: config.ollamaModel }, 'Using Ollama (local LLM)');
+      return new OllamaAdapter(config.ollamaBaseUrl, config.ollamaModel);
+    case 'mock':
+      log.info('Using Mock LLM (no API calls)');
+      return new MockLLMAdapter();
+    case 'anthropic':
+    default:
+      return new ClaudeAdapter(config.anthropicApiKey);
+  }
+}
 
 // === Run ===
 

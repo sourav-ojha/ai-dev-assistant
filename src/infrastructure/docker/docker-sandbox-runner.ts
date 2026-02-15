@@ -42,11 +42,16 @@ export class DockerSandboxRunner implements ISandboxRunner {
     try {
       await container.start();
 
-      // 1. Clone and checkout
-      await this.exec(container, [
+      // 1. Clone and checkout (requires network for GitHub)
+      const cloneOutput = await this.exec(container, [
         'sh', '-c',
-        `git clone --depth 1 --branch ${config.branch} ${config.repoUrl} /workspace/repo 2>&1 || git clone --depth 1 ${config.repoUrl} /workspace/repo 2>&1 && cd /workspace/repo && git checkout -b ${config.branch} 2>&1`,
+        `git clone --depth 1 ${config.repoUrl} /workspace/repo 2>&1 && cd /workspace/repo && (git checkout -b ${config.branch} 2>/dev/null || git checkout ${config.branch} 2>/dev/null || true)`,
       ]);
+
+      const repoExists = await this.exec(container, ['sh', '-c', 'test -d /workspace/repo && echo ok']);
+      if (!repoExists.trim().endsWith('ok')) {
+        throw new Error(`Git clone failed. Repo not found at /workspace/repo. Output: ${cloneOutput.slice(0, 500)}`);
+      }
 
       // 2. Apply code changes
       await this.applyCodeChanges(container, generatedCode);
@@ -108,7 +113,7 @@ export class DockerSandboxRunner implements ISandboxRunner {
       HostConfig: {
         Memory: config.memoryMb * 1024 * 1024,
         NanoCpus: config.cpuCount * 1e9,
-        NetworkMode: 'none', // No network access
+        NetworkMode: 'bridge', // Required for git clone from GitHub
         ReadonlyRootfs: false, // Need to write to /workspace
         AutoRemove: false,
       },
