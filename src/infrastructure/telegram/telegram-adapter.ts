@@ -202,7 +202,7 @@ export class TelegramAdapter implements INotificationChannel {
 
   async sendCompletion(task: Task, totalTokens: number, totalSteps: number): Promise<void> {
     const msg = truncate(
-      `✅ TASK COMPLETED\n\nTask: ${task.id}\nGoal: ${task.goal}\nBranch: ${task.featureBranch}\nSteps: ${totalSteps}\nTotal tokens: ${totalTokens}\n\nBranch is ready for manual merge.`,
+      `✅ TASK COMPLETED\n\nTask: ${task.id}\nGoal: ${task.goal}\nBranch: ${task.featureBranch}\nSteps: ${totalSteps}\nTotal tokens: ${totalTokens}\n\nCode not pushed/PR yet. See docs/LOG_ANALYSIS_AND_GAPS.md.`,
     );
 
     await this.bot.telegram.sendMessage(this.chatId, msg);
