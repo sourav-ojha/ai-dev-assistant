@@ -11,6 +11,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { mkdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { execSync } from 'node:child_process';
 import { transition, InvalidTransitionError } from '../core/state-machine/task-state-machine.js';
 import { TaskState, createTask } from '../core/entities/task.js';
 import type { Task, TokenUsage } from '../core/entities/task.js';
@@ -135,7 +138,12 @@ export class TaskOrchestrator {
     }
 
     try {
-      const repoStructure = getRepoStructure(this.config.workspaceDir);
+      // Clone repo locally for context reading
+      const repoDir = this.ensureRepoCloned(task);
+      const repoStructure = getRepoStructure(repoDir);
+
+      log.info({ taskId: task.id, repoDir }, 'Repo cloned for planning context');
+
       const result = await this.llm.generatePlan(task.goal, repoStructure);
 
       // Set taskId on the plan
@@ -205,7 +213,8 @@ export class TaskOrchestrator {
 
     try {
       // Read file contents for context (scoped to allowed files)
-      const fileContents = readFiles(this.config.workspaceDir, step.allowedFiles);
+      const repoDir = this.getRepoDir(task.id);
+      const fileContents = readFiles(repoDir, step.allowedFiles);
 
       // Generate code
       const codeResult = await this.llm.generateCode(step, fileContents, plan.summary);
@@ -316,6 +325,40 @@ export class TaskOrchestrator {
       default:
         return this.doTransition(task, TaskState.ABORTED, `Unexpected decision: ${decision.type}`);
     }
+  }
+
+  // === Repo management ===
+
+  /**
+   * Get the local repo directory for a task.
+   * Located at: WORKSPACE_DIR/<taskId>/repo
+   */
+  private getRepoDir(taskId: string): string {
+    return join(this.config.workspaceDir, taskId, 'repo');
+  }
+
+  /**
+   * Clone the repo locally if not already cloned.
+   * Used for reading repo structure (planning) and file contents (code gen context).
+   */
+  private ensureRepoCloned(task: Task): string {
+    const repoDir = this.getRepoDir(task.id);
+
+    if (existsSync(repoDir)) {
+      log.info({ taskId: task.id, repoDir }, 'Repo already cloned');
+      return repoDir;
+    }
+
+    const taskDir = join(this.config.workspaceDir, task.id);
+    mkdirSync(taskDir, { recursive: true });
+
+    log.info({ taskId: task.id, repoUrl: task.repoUrl, repoDir }, 'Cloning repo...');
+    execSync(`git clone --depth 1 ${task.repoUrl} ${repoDir}`, {
+      stdio: 'pipe',
+      timeout: 120_000,
+    });
+
+    return repoDir;
   }
 
   // === Helpers ===

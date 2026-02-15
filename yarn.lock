@@ -771,6 +771,7 @@ __metadata:
     better-sqlite3: "npm:^12.6.2"
     commander: "npm:^14.0.3"
     dockerode: "npm:^4.0.9"
+    dotenv: "npm:^17.3.1"
     pino: "npm:^10.3.1"
     pino-pretty: "npm:^13.1.3"
     telegraf: "npm:^4.16.3"
@@ -1085,6 +1086,13 @@ __metadata:
     tar-fs: "npm:^2.1.4"
     uuid: "npm:^10.0.0"
   checksum: 10c0/e9ea99c72d7f7d9e045910d8d8e094baa7852e874e09c1d96ef3384ac43f0a0fc5ff2fc72f9beb5c06028ad609cc5b67c7b392ea3e2a30b3e29671b3f4f7a070
+  languageName: node
+  linkType: hard
+
+"dotenv@npm:^17.3.1":
+  version: 17.3.1
+  resolution: "dotenv@npm:17.3.1"
+  checksum: 10c0/c78e0c2d5a549c751e544cc60e2b95e7cb67e0c551f42e094d161c6b297aa44b630a3c2dcacf5569e529a6c2a6b84e2ab9be8d37b299d425df5a18b81ce4a35f
   languageName: node
   linkType: hard
 

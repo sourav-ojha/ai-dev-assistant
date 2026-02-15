@@ -35,9 +35,20 @@ export class TelegramAdapter implements INotificationChannel {
   }
 
   async start(): Promise<void> {
-    // Use polling for v1 (simpler than webhooks for dev)
-    await this.bot.launch();
-    log.info('Telegram bot started (polling)');
+    // bot.launch() returns a promise that only resolves when bot.stop() is called.
+    // So we fire-and-forget it, then verify connectivity with a test API call.
+    this.bot.launch({ dropPendingUpdates: true }).catch((err) => {
+      log.error({ err: err instanceof Error ? err.message : String(err) }, 'Telegram bot polling error');
+    });
+
+    // Verify bot is alive by calling getMe
+    try {
+      const me = await this.bot.telegram.getMe();
+      log.info({ botUsername: me.username }, 'Telegram bot started (polling)');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Telegram bot failed to start: ${msg}`);
+    }
   }
 
   async stop(): Promise<void> {

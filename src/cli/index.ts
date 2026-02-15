@@ -5,6 +5,7 @@
  * Commands: submit, status, list, resume
  */
 
+import 'dotenv/config';
 import { Command } from 'commander';
 import { loadConfig, loadDbPath } from '../config/index.js';
 import { SQLiteTaskStore } from '../infrastructure/persistence/sqlite-task-store.js';
@@ -32,15 +33,22 @@ program
   .requiredOption('-g, --goal <goal>', 'The task goal / requirement')
   .requiredOption('-r, --repo <repoUrl>', 'Git repo URL to work on')
   .action(async (opts: { goal: string; repo: string }) => {
-    const config = loadConfig();
-    const { store, llm, notify, sandbox } = createAdapters(config);
-    const orchestrator = new TaskOrchestrator(llm, store, notify, sandbox, config);
-
-    log.info({ goal: opts.goal, repo: opts.repo }, 'Submitting task');
-
-    await notify.start();
+    let store: SQLiteTaskStore | null = null;
+    let notify: TelegramAdapter | null = null;
 
     try {
+      const config = loadConfig();
+      const adapters = createAdapters(config);
+      store = adapters.store;
+      notify = adapters.notify;
+
+      const orchestrator = new TaskOrchestrator(adapters.llm, store, notify, adapters.sandbox, config);
+
+      log.info({ goal: opts.goal, repo: opts.repo }, 'Submitting task');
+      console.log('Starting Telegram bot...');
+      await notify.start();
+      console.log('Telegram bot ready. Submitting task...\n');
+
       const task = await orchestrator.submitAndRun(opts.goal, opts.repo);
       console.log(`\nTask ${task.id} finished with state: ${task.state}`);
       console.log(`Tokens used: ${task.tokenUsage.totalTokensIn + task.tokenUsage.totalTokensOut}`);
@@ -48,9 +56,17 @@ program
       if (task.featureBranch) {
         console.log(`Branch: ${task.featureBranch}`);
       }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error({ err: message }, 'Submit failed');
+      console.error(`\nSubmit error: ${message}`);
+      if (err instanceof Error && err.stack) {
+        log.debug(err.stack);
+      }
+      process.exit(1);
     } finally {
-      await notify.stop();
-      (store as SQLiteTaskStore).close();
+      if (notify) await notify.stop().catch(() => {});
+      if (store) store.close();
     }
   });
 
@@ -154,6 +170,9 @@ const createAdapters = (config: ReturnType<typeof loadConfig>) => {
 // === Run ===
 
 program.parseAsync(process.argv).catch((err) => {
-  log.error({ error: err }, 'CLI error');
+  const message = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error ? err.stack : undefined;
+  log.error({ err: message, stack }, 'CLI error');
+  console.error(`\nError: ${message}`);
   process.exit(1);
 });
