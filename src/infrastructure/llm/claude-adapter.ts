@@ -5,7 +5,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { ILLMAdapter, FileContext, PlanGenerationResult, CodeGenerationResult, SummarizationResult } from '../../core/ports/llm-adapter.js';
+import type { ILLMAdapter, FileContext, PlanGenerationResult, CodeGenerationResult, SummarizationResult, InvestigationResult } from '../../core/ports/llm-adapter.js';
 import type { Plan, PlanStep } from '../../core/entities/plan.js';
 import { StepStatus } from '../../core/entities/plan.js';
 import { maxOutputTokensFor } from '../../core/entities/token-budget.js';
@@ -101,6 +101,67 @@ export class ClaudeAdapter implements ILLMAdapter {
 
     return {
       summary: extractText(response),
+      tokensIn: response.usage.input_tokens,
+      tokensOut: response.usage.output_tokens,
+      durationMs,
+    };
+  }
+
+  async investigateFailure(
+    step: PlanStep,
+    failureReason: string,
+    testOutput: string,
+    fileContents: FileContext[],
+    diff?: string,
+  ): Promise<InvestigationResult> {
+    const systemPrompt = `You are a senior developer investigating a failed build/test step.
+
+OUTPUT FORMAT: Respond with ONLY a valid JSON object. No markdown, no code fences.
+{
+  "diagnosis": "1-3 sentences explaining why the step failed (root cause).",
+  "revisedInstruction": "A concrete, revised instruction for the same step that will fix the failure. Same format as the original step instruction: clear, actionable, and scoped to the allowed files."
+}
+
+RULES:
+- diagnosis: Be specific (e.g. missing import, wrong path, test expectation mismatch).
+- revisedInstruction: Must be a single instruction the code generator can follow to produce a fix. Do not output code yourself.`;
+
+    const fileContextStr = fileContents.length
+      ? fileContents.map((f) => `--- ${f.path} ---\n${f.content.slice(0, 3000)}\n`).join('\n')
+      : '(no file context)';
+    const userPrompt = `STEP: ${step.title}
+ORIGINAL INSTRUCTION: ${step.instruction}
+ALLOWED FILES: ${step.allowedFiles.join(', ')}
+
+FAILURE REASON:
+${failureReason.slice(0, 1500)}
+
+TEST OUTPUT:
+${testOutput.slice(0, 2000)}
+${diff ? `\nDIFF (if any):\n${diff.slice(0, 1500)}` : ''}
+
+CURRENT FILE CONTENTS:
+${fileContextStr}
+
+Provide diagnosis and revisedInstruction as JSON.`;
+
+    const start = Date.now();
+    const response = await this.client.messages.create({
+      model: MODEL,
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+
+    const durationMs = Date.now() - start;
+    const text = extractText(response);
+    const parsed = parseInvestigationJSON(text);
+
+    log.info({ step: step.index, tokensIn: response.usage.input_tokens, tokensOut: response.usage.output_tokens, durationMs }, 'Investigation completed');
+
+    return {
+      diagnosis: parsed.diagnosis,
+      revisedInstruction: parsed.revisedInstruction,
       tokensIn: response.usage.input_tokens,
       tokensOut: response.usage.output_tokens,
       durationMs,
@@ -213,5 +274,14 @@ const parsePlanFromJSON = (text: string, taskId: string): Plan => {
       tokensUsed: 0,
     })),
     createdAt: new Date().toISOString(),
+  };
+};
+
+const parseInvestigationJSON = (text: string): { diagnosis: string; revisedInstruction: string } => {
+  const cleaned = text.replace(/^```json?\n?/m, '').replace(/\n?```$/m, '').trim();
+  const parsed = JSON.parse(cleaned);
+  return {
+    diagnosis: String(parsed.diagnosis ?? 'Unknown cause'),
+    revisedInstruction: String(parsed.revisedInstruction ?? 'Retry the step with the same instruction.'),
   };
 };

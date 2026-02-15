@@ -12,6 +12,7 @@ export type ApprovalDecision =
   | { type: 'abort' }
   | { type: 'retry' }
   | { type: 'skip' }
+  | { type: 'fix' }
   | { type: 'modify'; feedback: string };
 
 export interface StepResultPayload {

@@ -32,6 +32,16 @@ export interface SummarizationResult {
   durationMs: number;
 }
 
+export interface InvestigationResult {
+  /** Brief diagnosis of why the step failed. */
+  diagnosis: string;
+  /** Revised instruction to resolve the failure (used for retry). */
+  revisedInstruction: string;
+  tokensIn: number;
+  tokensOut: number;
+  durationMs: number;
+}
+
 export interface ILLMAdapter {
   /**
    * Generate a structured plan from a goal description.
@@ -61,4 +71,15 @@ export interface ILLMAdapter {
     testResults: string,
     stepTitle: string,
   ): Promise<SummarizationResult>;
+
+  /**
+   * Investigate a failed step and return a diagnosis plus revised instruction to fix it.
+   */
+  investigateFailure(
+    step: PlanStep,
+    failureReason: string,
+    testOutput: string,
+    fileContents: FileContext[],
+    diff?: string,
+  ): Promise<InvestigationResult>;
 }

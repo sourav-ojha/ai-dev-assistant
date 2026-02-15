@@ -5,7 +5,7 @@
  * Set LLM_PROVIDER=mock to use.
  */
 
-import type { ILLMAdapter, FileContext, PlanGenerationResult, CodeGenerationResult, SummarizationResult } from '../../core/ports/llm-adapter.js';
+import type { ILLMAdapter, FileContext, PlanGenerationResult, CodeGenerationResult, SummarizationResult, InvestigationResult } from '../../core/ports/llm-adapter.js';
 import type { Plan, PlanStep } from '../../core/entities/plan.js';
 import { StepStatus } from '../../core/entities/plan.js';
 import { createPlanStep } from '../../core/entities/plan.js';
@@ -72,6 +72,24 @@ Created by step: ${step.title}
       tokensIn: 50,
       tokensOut: 30,
       durationMs: 20,
+    };
+  }
+
+  async investigateFailure(
+    step: PlanStep,
+    failureReason: string,
+    _testOutput: string,
+    _fileContents: FileContext[],
+    _diff?: string,
+  ): Promise<InvestigationResult> {
+    log.info({ step: step.index, title: step.title }, 'Mock: investigating failure');
+
+    return {
+      diagnosis: `Mock diagnosis: step failed because ${failureReason.slice(0, 100)}.`,
+      revisedInstruction: `${step.instruction} Ensure the fix addresses the test/output errors above.`,
+      tokensIn: 100,
+      tokensOut: 50,
+      durationMs: 10,
     };
   }
 }

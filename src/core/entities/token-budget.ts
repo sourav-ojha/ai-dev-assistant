@@ -17,7 +17,7 @@ export const TOKEN_BUDGET = {
   PER_SUMMARY_CALL_OUT: 1_000,
 } as const;
 
-export type LLMCallType = 'planning' | 'code_generation' | 'summarization';
+export type LLMCallType = 'planning' | 'code_generation' | 'summarization' | 'investigation';
 
 export interface LLMCallRecord {
   taskId: string;
@@ -43,11 +43,15 @@ export const remainingBudget = (
 /**
  * Get the max output tokens allowed for a given call type.
  */
+/** Max output tokens for an investigation (fix-it) call. */
+const PER_INVESTIGATION_CALL_OUT = 2_000;
+
 export const maxOutputTokensFor = (callType: LLMCallType): number => {
   switch (callType) {
     case 'planning': return TOKEN_BUDGET.PER_PLANNING_CALL_OUT;
     case 'code_generation': return TOKEN_BUDGET.PER_CODE_GEN_STEP_OUT;
     case 'summarization': return TOKEN_BUDGET.PER_SUMMARY_CALL_OUT;
+    case 'investigation': return PER_INVESTIGATION_CALL_OUT;
   }
 };
 

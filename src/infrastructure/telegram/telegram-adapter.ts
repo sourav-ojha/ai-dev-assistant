@@ -115,10 +115,16 @@ export class TelegramAdapter implements INotificationChannel {
       `🚨 TASK FAILED\n\nTask: ${task.id}\n${stepInfo}${reason}`,
     );
 
+    log.warn(
+      { taskId: task.id, stepIndex, reason },
+      'Failure report (logged and sent to Telegram)',
+    );
+
     await this.bot.telegram.sendMessage(this.chatId, msg, {
       ...Markup.inlineKeyboard([
         [
           Markup.button.callback('🔄 Retry', `retry:${task.id}`),
+          Markup.button.callback('🔧 Fix it', `fix:${task.id}`),
           Markup.button.callback('⏭ Skip Step', `skip:${task.id}`),
         ],
         [
@@ -205,6 +211,7 @@ const actionToDecision = (action: string): ApprovalDecision | null => {
     case 'abort': return { type: 'abort' };
     case 'retry': return { type: 'retry' };
     case 'skip': return { type: 'skip' };
+    case 'fix': return { type: 'fix' };
     default: return null;
   }
 };

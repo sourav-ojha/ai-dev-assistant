@@ -311,6 +311,47 @@ export class TaskOrchestrator {
       case 'retry':
         task = { ...task, failureReason: null };
         return this.doTransition(task, TaskState.EXECUTING_STEP, 'Retrying current step');
+      case 'fix': {
+        const plan = this.store.getPlan(task.id);
+        if (!plan) throw new Error(`Plan not found for task: ${task.id}`);
+        const step = plan.steps[task.currentStepIndex];
+        if (!step) throw new Error(`Step not found for task: ${task.id}`);
+
+        if (wouldExceedBudget(task.tokenUsage.totalTokensIn, task.tokenUsage.totalTokensOut, 2500, this.config.tokenBudgetPerTask)) {
+          const budgetMsg = 'Fix-it skipped: token budget would be exceeded by investigation.';
+          task = { ...task, failureReason: budgetMsg };
+          await this.notify.sendStatus(task, budgetMsg);
+          return this.doTransition(task, TaskState.STEP_FAILED, 'Budget exceeded for fix-it');
+        }
+
+        const repoDir = this.getRepoDir(task.id);
+        const fileContents = readFiles(repoDir, step.allowedFiles);
+
+        const investigation = await this.llm.investigateFailure(
+          step,
+          task.failureReason ?? 'Unknown failure',
+          step.testResults ?? '',
+          fileContents,
+          step.diff ?? undefined,
+        );
+
+        task = this.addTokenUsage(task, investigation.tokensIn, investigation.tokensOut);
+        this.logLLMCall(task.id, step.index, 'investigation', investigation.tokensIn, investigation.tokensOut, investigation.durationMs);
+
+        log.info(
+          { taskId: task.id, stepIndex: step.index, diagnosis: investigation.diagnosis, revisedInstruction: investigation.revisedInstruction },
+          'Investigation complete — diagnosis and plan logged',
+        );
+
+        const resolutionMessage = `🔧 Fix-it investigation\n\nDiagnosis: ${investigation.diagnosis}\n\nRevised plan: ${investigation.revisedInstruction}`;
+        await this.notify.sendStatus(task, resolutionMessage);
+
+        step.instruction = investigation.revisedInstruction;
+        this.store.savePlan(plan);
+
+        task = { ...task, failureReason: null };
+        return this.doTransition(task, TaskState.EXECUTING_STEP, 'Retrying with revised instruction from fix-it');
+      }
       case 'skip': {
         const nextIndex = task.currentStepIndex + 1;
         task = { ...task, currentStepIndex: nextIndex, failureReason: null };
