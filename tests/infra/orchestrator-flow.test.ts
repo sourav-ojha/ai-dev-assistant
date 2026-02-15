@@ -155,6 +155,21 @@ class MockNotificationChannel implements INotificationChannel {
     this.messages.push(`FAILURE: step=${stepIndex ?? 'N/A'} reason=${reason}`);
   }
 
+  async sendScopeViolationForApproval(
+    task: Task,
+    reason: string,
+    allowedFiles: string[],
+    modifiedFiles: string[],
+    stepIndex: number,
+    _justifications?: unknown[],
+  ): Promise<void> {
+    this.messages.push(`SCOPE_VIOLATION: allowed=[${allowedFiles.join(',')}] modified=[${modifiedFiles.join(',')}]`);
+  }
+
+  async sendBudgetExceeded(task: Task, totalUsed: number, budgetLimit: number): Promise<void> {
+    this.messages.push(`BUDGET_EXCEEDED: used=${totalUsed} limit=${budgetLimit}`);
+  }
+
   async sendStatus(task: Task, message: string): Promise<void> {
     this.messages.push(`STATUS: ${message}`);
   }

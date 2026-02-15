@@ -6,6 +6,7 @@
 
 import { Telegraf, Markup } from 'telegraf';
 import type { INotificationChannel, ApprovalDecision, StepResultPayload } from '../../core/ports/notification-channel.js';
+import type { ScopeExtensionJustification } from '../../core/validation/file-scope-validator.js';
 import type { Task } from '../../core/entities/task.js';
 import type { Plan } from '../../core/entities/plan.js';
 import { remainingBudget } from '../../core/entities/token-budget.js';
@@ -142,12 +143,22 @@ export class TelegramAdapter implements INotificationChannel {
     allowedFiles: string[],
     modifiedFiles: string[],
     stepIndex: number,
+    justifications?: ScopeExtensionJustification[],
   ): Promise<void> {
     const allowed = allowedFiles.join(', ') || 'none';
     const modified = modifiedFiles.join(', ') || 'none';
-    const msg = truncate(
-      `📂 FILE SCOPE\n\nTask: ${task.id}\nStep ${stepIndex + 1}\n\n${reason}\n\nAllowed in this step: [${allowed}]\nModified by AI: [${modified}]\n\nAllow these changes and proceed, or revise the plan (retry with strict scope)?`,
-    );
+
+    let body = `📂 FILE SCOPE\n\nTask: ${task.id}\nStep ${stepIndex + 1}\n\n${reason}\n\nAllowed in this step: [${allowed}]\nModified by AI: [${modified}]`;
+
+    if (justifications && justifications.length > 0) {
+      body += '\n\n— Why these files were changed (scope extension):\n';
+      for (const j of justifications) {
+        body += `\n• ${j.filePath}\n  Changes: ${j.changeSummary}\n  Why: ${j.reason}\n`;
+      }
+    }
+
+    body += '\n\nAllow these changes and proceed, or revise the plan (retry with strict scope)?';
+    const msg = truncate(body);
 
     log.warn(
       { taskId: task.id, stepIndex, allowedFiles, modifiedFiles },
@@ -165,6 +176,21 @@ export class TelegramAdapter implements INotificationChannel {
     });
 
     log.info({ taskId: task.id, stepIndex }, 'Scope approval request sent');
+  }
+
+  async sendBudgetExceeded(task: Task, totalUsed: number, budgetLimit: number): Promise<void> {
+    const msg = truncate(
+      `⚠️ TOKEN BUDGET EXCEEDED\n\nTask: ${task.id}\n\nUsed: ${totalUsed} / ${budgetLimit}\n\nProgress is saved. To continue:\n1. Increase TOKEN_BUDGET_PER_TASK in .env\n2. Choose Retry to resume from this step\n\nOr Abort to stop and keep work done so far.`,
+    );
+
+    log.warn({ taskId: task.id, totalUsed, budgetLimit }, 'Token budget exceeded — notifying user');
+
+    await this.bot.telegram.sendMessage(this.chatId, msg, {
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback('🔄 Retry (after increasing budget)', `retry:${task.id}`)],
+        [Markup.button.callback('🛑 Abort', `abort:${task.id}`)],
+      ]),
+    });
   }
 
   async sendStatus(task: Task, message: string): Promise<void> {

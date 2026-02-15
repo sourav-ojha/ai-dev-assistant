@@ -21,7 +21,7 @@ import type { Plan } from '../core/entities/plan.js';
 import { StepStatus } from '../core/entities/plan.js';
 import { wouldExceedBudget, remainingBudget } from '../core/entities/token-budget.js';
 import type { LLMCallRecord, LLMCallType } from '../core/entities/token-budget.js';
-import { validateFileScope } from '../core/validation/file-scope-validator.js';
+import { validateFileScope, buildScopeExtensionJustifications } from '../core/validation/file-scope-validator.js';
 import { parseDiff } from '../core/validation/diff-parser.js';
 import type { ILLMAdapter } from '../core/ports/llm-adapter.js';
 import type { ITaskStore } from '../core/ports/task-store.js';
@@ -32,6 +32,9 @@ import type { AppConfig } from '../config/index.js';
 import { createLogger } from '../infrastructure/logger.js';
 
 const log = createLogger('orchestrator');
+
+/** Failure reason prefix when task was paused due to token budget — used to show budget-specific message and resume instructions. */
+const BUDGET_EXCEEDED_PREFIX = 'Token budget exceeded';
 
 export class TaskOrchestrator {
   constructor(
@@ -134,9 +137,9 @@ export class TaskOrchestrator {
   // === State handlers ===
 
   private async handlePlanning(task: Task): Promise<Task> {
-    // Budget check before LLM call
+    // Budget check before LLM call — do not just break; persist and notify in handleFailureGuidance so user can increase budget and resume
     if (wouldExceedBudget(task.tokenUsage.totalTokensIn, task.tokenUsage.totalTokensOut, 8000, this.config.tokenBudgetPerTask)) {
-      task = { ...task, failureReason: 'Token budget would be exceeded by planning call' };
+      task = { ...task, failureReason: BUDGET_EXCEEDED_PREFIX };
       return this.doTransition(task, TaskState.PAUSED_ON_FAILURE, 'Budget exceeded');
     }
 
@@ -208,9 +211,9 @@ export class TaskOrchestrator {
 
     log.info({ taskId: task.id, step: step.index, title: step.title }, 'Executing step');
 
-    // Budget check before code generation
+    // Budget check before code generation — persist and notify in handleFailureGuidance so tokens already used are not wasted
     if (wouldExceedBudget(task.tokenUsage.totalTokensIn, task.tokenUsage.totalTokensOut, 4000, this.config.tokenBudgetPerTask)) {
-      task = { ...task, failureReason: 'Token budget exceeded' };
+      task = { ...task, failureReason: BUDGET_EXCEEDED_PREFIX };
       return this.doTransition(task, TaskState.STEP_FAILED, 'Budget exceeded');
     }
 
@@ -312,7 +315,13 @@ export class TaskOrchestrator {
   }
 
   private async handleFailureGuidance(task: Task): Promise<Task> {
-    await this.notify.sendFailureReport(task, task.failureReason ?? 'Unknown failure', task.currentStepIndex);
+    const isBudgetExceeded = task.failureReason?.startsWith(BUDGET_EXCEEDED_PREFIX) ?? false;
+    if (isBudgetExceeded) {
+      const totalUsed = task.tokenUsage.totalTokensIn + task.tokenUsage.totalTokensOut;
+      await this.notify.sendBudgetExceeded(task, totalUsed, this.config.tokenBudgetPerTask);
+    } else {
+      await this.notify.sendFailureReport(task, task.failureReason ?? 'Unknown failure', task.currentStepIndex);
+    }
     const decision = await this.notify.waitForDecision(task.id);
 
     switch (decision.type) {
@@ -326,9 +335,7 @@ export class TaskOrchestrator {
         if (!step) throw new Error(`Step not found for task: ${task.id}`);
 
         if (wouldExceedBudget(task.tokenUsage.totalTokensIn, task.tokenUsage.totalTokensOut, 2500, this.config.tokenBudgetPerTask)) {
-          const budgetMsg = 'Fix-it skipped: token budget would be exceeded by investigation.';
-          task = { ...task, failureReason: budgetMsg };
-          await this.notify.sendStatus(task, budgetMsg);
+          task = { ...task, failureReason: BUDGET_EXCEEDED_PREFIX };
           return this.doTransition(task, TaskState.STEP_FAILED, 'Budget exceeded for fix-it');
         }
 
@@ -383,13 +390,16 @@ export class TaskOrchestrator {
     const step = plan.steps[task.currentStepIndex];
     if (!step || !step.diff) throw new Error(`Step or diff not found for scope approval: ${task.id}`);
 
-    const modifiedFiles = parseDiff(step.diff).map((f) => f.path);
+    const diffFiles = parseDiff(step.diff);
+    const modifiedPaths = diffFiles.map((f) => f.path);
+    const justifications = buildScopeExtensionJustifications(step, diffFiles);
     await this.notify.sendScopeViolationForApproval(
       task,
       task.failureReason ?? 'File scope violation',
       step.allowedFiles,
-      modifiedFiles,
+      modifiedPaths,
       task.currentStepIndex,
+      justifications,
     );
 
     const decision = await this.notify.waitForDecision(task.id);

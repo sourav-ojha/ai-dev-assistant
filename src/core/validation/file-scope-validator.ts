@@ -23,6 +23,19 @@ export interface ScopeViolation {
   detail: string;
 }
 
+/**
+ * Justification for extending scope to include an out-of-scope file.
+ * Shown to the user when asking allow/revise so they know what changes and why.
+ */
+export interface ScopeExtensionJustification {
+  /** File path that was modified outside allowed scope. */
+  filePath: string;
+  /** Summary of changes (e.g. "+5 -2 lines", "new file"). */
+  changeSummary: string;
+  /** Why this file was changed — ties to the step goal. */
+  reason: string;
+}
+
 const MAX_DIFF_LINES = 200;
 const MAX_FILES_MODIFIED = 3;
 
@@ -85,6 +98,44 @@ export const validateFileScope = (
   }
 
   return violations;
+};
+
+/**
+ * Returns true if the file is within the step's allowed scope.
+ */
+export const isFileInScope = (step: PlanStep, file: DiffFile): boolean => {
+  if (file.isNew && !step.newFilesAllowed) return false;
+  if (step.allowedFiles.includes(file.path)) return true;
+  if (matchesAnyGlob(file.path, step.allowedGlobs)) return true;
+  if (file.isNew && step.newFilesAllowed) return true;
+  return false;
+};
+
+/**
+ * Build justifications for each out-of-scope file: what changed and why (from step goal).
+ * Used when asking the user to allow scope extension so they see what will change and why.
+ */
+export const buildScopeExtensionJustifications = (
+  step: PlanStep,
+  modifiedFiles: DiffFile[],
+): ScopeExtensionJustification[] => {
+  const reason = `Step: "${step.title}". ${step.description}`.trim();
+  const out: ScopeExtensionJustification[] = [];
+
+  for (const file of modifiedFiles) {
+    if (isFileInScope(step, file)) continue;
+
+    const changeSummary = file.isNew
+      ? `New file (+${file.linesAdded} lines)`
+      : `+${file.linesAdded} lines added, ${file.linesRemoved} removed`;
+    out.push({
+      filePath: file.path,
+      changeSummary,
+      reason,
+    });
+  }
+
+  return out;
 };
 
 /**

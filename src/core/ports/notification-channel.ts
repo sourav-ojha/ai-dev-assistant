@@ -5,6 +5,7 @@
 
 import type { Task } from '../entities/task.js';
 import type { Plan, PlanStep } from '../entities/plan.js';
+import type { ScopeExtensionJustification } from '../validation/file-scope-validator.js';
 
 export type ApprovalDecision =
   | { type: 'approve' }
@@ -44,7 +45,12 @@ export interface INotificationChannel {
     allowedFiles: string[],
     modifiedFiles: string[],
     stepIndex: number,
+    /** Per-file justification: what changes and why (for out-of-scope files). */
+    justifications?: ScopeExtensionJustification[],
   ): Promise<void>;
+
+  /** Notify user that token budget was exceeded; progress is saved, they can increase budget and resume or abort. */
+  sendBudgetExceeded(task: Task, totalUsed: number, budgetLimit: number): Promise<void>;
 
   /** Send a generic status message. */
   sendStatus(task: Task, message: string): Promise<void>;
